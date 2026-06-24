@@ -8,15 +8,18 @@ import java.security.NoSuchAlgorithmException;
 import java.sql.*;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
 
 public class MainApplication {
     private static final String DB_URL = "jdbc:postgresql://localhost:5432/library_db";
     private static final String DB_USER = "postgres";
-    private static final String DB_PASS = "pass";
+    private static final String DB_PASS = "1234";
 
     private static JFrame currentFrame;
 
-    public static void main(String[] resignation) {
+    public static void main(String[] args) {
         SwingUtilities.invokeLater(MainApplication::showLoginWindow);
     }
 
@@ -38,26 +41,86 @@ public class MainApplication {
         if (currentFrame != null) currentFrame.dispose();
 
         JFrame frame = new JFrame("Библиотека: Вход в систему");
-        frame.setSize(400, 300);
+        frame.setSize(450, 600);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setLocationRelativeTo(null);
 
-        JPanel panel = new JPanel(new GridLayout(6, 1, 10, 10));
-        panel.setBorder(BorderFactory.createEmptyBorder(20, 30, 20, 30));
+        JPanel mainPanel = new JPanel();
+        mainPanel.setLayout(new BoxLayout(mainPanel, BoxLayout.Y_AXIS));
+        mainPanel.setBorder(BorderFactory.createEmptyBorder(20, 30, 20, 30));
 
         JLabel titleLabel = new JLabel("Авторизация", SwingConstants.CENTER);
         titleLabel.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        titleLabel.setAlignmentX(Component.CENTER_ALIGNMENT);
 
+        JPanel fieldsPanel = new JPanel(new GridLayout(2, 2, 10, 10));
+        fieldsPanel.setMaximumSize(new Dimension(400, 60));
         JTextField loginField = new JTextField();
         JPasswordField passwordField = new JPasswordField();
-        JButton loginButton = new JButton("Войти");
+        fieldsPanel.add(new JLabel("Логин:"));
+        fieldsPanel.add(loginField);
+        fieldsPanel.add(new JLabel("Пароль:"));
+        fieldsPanel.add(passwordField);
 
-        panel.add(titleLabel);
-        panel.add(new JLabel("Логин:"));
-        panel.add(loginField);
-        panel.add(new JLabel("Пароль:"));
-        panel.add(passwordField);
-        panel.add(loginButton);
+        JPanel captchaWrapper = new JPanel(new BorderLayout(0, 10));
+        captchaWrapper.setBorder(BorderFactory.createEmptyBorder(15, 0, 15, 0));
+        JLabel captchaLabel = new JLabel("Соберите пазл (кликайте для обмена фрагментов):", SwingConstants.CENTER);
+        captchaWrapper.add(captchaLabel, BorderLayout.NORTH);
+
+        JPanel captchaGrid = new JPanel(new GridLayout(2, 2, 2, 2));
+        captchaGrid.setMaximumSize(new Dimension(240, 240));
+
+        List<Integer> pieces = Arrays.asList(0, 1, 2, 3);
+        Collections.shuffle(pieces);
+
+        JButton[] buttons = new JButton[4];
+        final JButton[] selectedBtn = {null};
+
+        for (int i = 0; i < 4; i++) {
+            int imageId = pieces.get(i);
+            ImageIcon icon = new ImageIcon(new ImageIcon("images/" + (imageId + 1) + ".png")
+                    .getImage().getScaledInstance(120, 120, Image.SCALE_SMOOTH));
+
+            buttons[i] = new JButton(icon);
+            buttons[i].setPreferredSize(new Dimension(120, 120));
+            buttons[i].putClientProperty("id", imageId);
+            buttons[i].setFocusPainted(false);
+            buttons[i].setContentAreaFilled(false);
+
+            buttons[i].addActionListener(e -> {
+                JButton clicked = (JButton) e.getSource();
+                if (selectedBtn[0] == null) {
+                    selectedBtn[0] = clicked;
+                    clicked.setBorder(BorderFactory.createLineBorder(Color.RED, 3));
+                } else {
+                    Icon tempIcon = selectedBtn[0].getIcon();
+                    int tempId = (int) selectedBtn[0].getClientProperty("id");
+
+                    selectedBtn[0].setIcon(clicked.getIcon());
+                    selectedBtn[0].putClientProperty("id", clicked.getClientProperty("id"));
+                    selectedBtn[0].setBorder(UIManager.getBorder("Button.border"));
+
+                    clicked.setIcon(tempIcon);
+                    clicked.putClientProperty("id", tempId);
+
+                    selectedBtn[0] = null;
+                }
+            });
+            captchaGrid.add(buttons[i]);
+        }
+
+        JPanel gridCenteringPanel = new JPanel(new FlowLayout(FlowLayout.CENTER));
+        gridCenteringPanel.add(captchaGrid);
+        captchaWrapper.add(gridCenteringPanel, BorderLayout.CENTER);
+
+        JButton loginButton = new JButton("Войти");
+        loginButton.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        mainPanel.add(titleLabel);
+        mainPanel.add(Box.createRigidArea(new Dimension(0, 20)));
+        mainPanel.add(fieldsPanel);
+        mainPanel.add(captchaWrapper);
+        mainPanel.add(loginButton);
 
         loginButton.addActionListener(e -> {
             String username = loginField.getText().trim();
@@ -68,15 +131,24 @@ public class MainApplication {
                 return;
             }
 
-            processLogin(frame, username, password);
+            int[] targetOrder = {0, 1, 2, 3};
+            boolean isCaptchaSolved = true;
+            for (int i = 0; i < 4; i++) {
+                if ((int) buttons[i].getClientProperty("id") != targetOrder[i]) {
+                    isCaptchaSolved = false;
+                    break;
+                }
+            }
+
+            processLogin(frame, username, password, isCaptchaSolved);
         });
 
         currentFrame = frame;
-        frame.add(panel);
+        frame.add(mainPanel);
         frame.setVisible(true);
     }
 
-    private static void processLogin(JFrame parent, String username, String password) {
+    private static void processLogin(JFrame parent, String username, String password, boolean isCaptchaSolved) {
         String sql = "SELECT id, password_hash, role, is_first_login, failed_attempts, last_login, status FROM users WHERE username = ?";
 
         try (Connection conn = DriverManager.getConnection(DB_URL, DB_USER, DB_PASS);
@@ -86,7 +158,7 @@ public class MainApplication {
             ResultSet rs = stmt.executeQuery();
 
             if (!rs.next()) {
-                JOptionPane.showMessageDialog(parent, "Вы ввели неверный логин или пароль. Пожалуйста проверьте ещё раз введенные данные.", "Ошибка авторизации", JOptionPane.ERROR_MESSAGE);
+                JOptionPane.showMessageDialog(parent, "Вы ввели неверный логин или пароль.", "Ошибка авторизации", JOptionPane.ERROR_MESSAGE);
                 return;
             }
 
@@ -112,8 +184,9 @@ public class MainApplication {
                 }
             }
 
-            String inputHash = hashPassword(password);
-            if (dbHash.equals(inputHash)) {
+            boolean passwordCorrect = dbHash.equals(hashPassword(password));
+
+            if (passwordCorrect && isCaptchaSolved) {
                 try (PreparedStatement updateStmt = conn.prepareStatement(
                         "UPDATE users SET failed_attempts = 0, last_login = CURRENT_TIMESTAMP WHERE id = ?")) {
                     updateStmt.setInt(1, userId);
@@ -134,7 +207,11 @@ public class MainApplication {
                     JOptionPane.showMessageDialog(parent, "Вы заблокированы. Обратитесь к администратору.", "Аккаунт заблокирован", JOptionPane.ERROR_MESSAGE);
                 } else {
                     executeControlQuery("UPDATE users SET failed_attempts = ? WHERE id = ?", failedAttempts, userId);
-                    JOptionPane.showMessageDialog(parent, "Вы ввели неверный логин или пароль. Пожалуйста проверьте ещё раз введенные данные.", "Ошибка авторизации", JOptionPane.ERROR_MESSAGE);
+                    if (!isCaptchaSolved) {
+                        JOptionPane.showMessageDialog(parent, "Пазл собран неверно! Попытка: " + failedAttempts + " из 3", "Ошибка капчи", JOptionPane.ERROR_MESSAGE);
+                    } else {
+                        JOptionPane.showMessageDialog(parent, "Вы ввели неверный логин или пароль. Попытка: " + failedAttempts + " из 3", "Ошибка авторизации", JOptionPane.ERROR_MESSAGE);
+                    }
                 }
             }
 
